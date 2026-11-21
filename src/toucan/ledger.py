@@ -170,10 +170,12 @@ def timeline(app, key, since, until=None, github=True):
     owned = [r['name'] for r in cfg['routes'] if r['thread'] == thread]
     route_marks = ','.join('?' for _ in owned) or 'NULL'
     # A message is this project's if one of its requests is with the thread, or it has none and its chat is the thread's.
+    # A photo that joined a request (request_messages) goes with that request.
+    own = 'SELECT 1 FROM requests r WHERE (r.message_id=m.id OR r.id=(SELECT request_id FROM request_messages l WHERE l.message_id=m.id))'
     for row in app.db.execute(f'SELECT m.id,m.source,m.chat,m.sender_key,m.text,m.ts FROM messages m WHERE m.sender_key IN ({marks}) '
                               'AND COALESCE(m.is_owner,0)=0 AND COALESCE(m.deleted,0)=0 AND m.ts>=? AND m.ts<? '
-                              'AND (EXISTS (SELECT 1 FROM requests r WHERE r.message_id=m.id AND r.thread=?) OR '
-                              f'(NOT EXISTS (SELECT 1 FROM requests r WHERE r.message_id=m.id) AND m.route IN ({route_marks}))) '
+                              f'AND (EXISTS ({own} AND r.thread=?) OR '
+                              f'(NOT EXISTS ({own}) AND m.route IN ({route_marks}))) '
                               'ORDER BY m.ts,m.id', (*sorted(members), since, until, thread, *owned)):
         items.append(item(ledger, row['ts'], row['source'], 'in', [row['sender_key']], row['chat'], row['text'],
                           ref=f'message:{row["id"]}'))

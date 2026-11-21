@@ -117,6 +117,13 @@ QUOTE_CHARS = 1500  # of a quoted message's text shown with the reply that quote
 QUOTE_MEDIA = ('image', 'video', 'gif', 'audio', 'document', 'sticker')  # media wacli can quote back
 
 
+def lid_aliases(chat, mapping):
+    """The other JIDs a 1:1 chat may be stored under (its @lid or phone JID), from a LID map."""
+    if not chat.endswith(('@lid', '@s.whatsapp.net')):
+        return []
+    return sorted({jid for jid in [mapping.get(chat), *(lid for lid, pn in mapping.items() if pn == chat)] if jid and jid != chat})
+
+
 def chat_aliases(paths, chat):
     """The other JIDs a 1:1 chat may be stored under (its @lid or phone JID), from the session's LID map."""
     if not chat.endswith(('@lid', '@s.whatsapp.net')):
@@ -125,7 +132,7 @@ def chat_aliases(paths, chat):
         mapping = lid_map(paths)
     except (OSError, sqlite3.Error):
         return []
-    return sorted({jid for jid in [mapping.get(chat), *(lid for lid, pn in mapping.items() if pn == chat)] if jid and jid != chat})
+    return lid_aliases(chat, mapping)
 
 
 def quote_block(db, chats, msg_id):
@@ -176,6 +183,9 @@ def whatsapp(paths, chat, since, tracked):
             # What own_text was before the quote was kept apart, so that change is not read as an edit.
             legacy = m['display_text'] if not m['text'] and display != (m['display_text'] or '') else None
             text = own
+            # A photo with no caption that quotes nothing; wacli's display text ("Sent image") is not a caption.
+            # Not stored: sync reads it to merge photo bursts and drops it.
+            bare = m.get('media_type') == 'image' and not (m['text'] or m.get('media_caption') or m.get('quoted_msg_id'))
             if m.get('quoted_msg_id'):
                 # text adds the quoted message for the thread to read; own_text is what the sender wrote.
                 # A 1:1 reply may be stored under the phone JID while the message it quotes is under the LID.
@@ -186,7 +196,8 @@ def whatsapp(paths, chat, since, tracked):
                                is_owner=int(bool(m['from_me'])), ts=m['ts'], text=text, own_text=own, legacy_own=legacy,
                                quoted_ids=json.dumps([m['quoted_msg_id']] if m.get('quoted_msg_id') else []),
                                attachments_json=json.dumps([a for a in attachments if a]),
-                               edited=int(bool(m['edited'])), deleted=int(bool(m['revoked'] or m.get('deleted_for_me')))))
+                               edited=int(bool(m['edited'])), deleted=int(bool(m['revoked'] or m.get('deleted_for_me'))),
+                               bare_photo=bare))
     finally:
         db.close()
     return result
