@@ -137,10 +137,11 @@ A photo then joins the request of the same person's message just before it in th
 
 - it has no caption and doesn't quote another message (any text makes its own request),
 - it came at most `photo_burst_seconds` after that message (each photo of an album counts from
-  the one before it), and
+  the one before it),
 - that request is still `new`: not claimed, not held by the live router, and not split across
   threads, and
-- that message isn't a voice note still waiting for its transcript.
+- that message isn't a voice note still waiting for its transcript or an answer to a decision
+  card.
 
 Otherwise the photo becomes its own request, as before. Every message is kept. The inbox lists
 the photos under the request, after its message, marked as part of it. A photo that joins a
