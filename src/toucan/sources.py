@@ -173,6 +173,8 @@ def whatsapp(paths, chat, since, tracked):
             if m.get('quoted_msg_id') and display.startswith('> '):
                 display = display.rsplit('\n', 1)[-1]  # wacli puts the quoted text above the message's own label
             own = m['text'] or display or m.get('media_caption') or ''
+            # What own_text was before the quote was kept apart, so that change is not read as an edit.
+            legacy = m['display_text'] if not m['text'] and display != (m['display_text'] or '') else None
             text = own
             if m.get('quoted_msg_id'):
                 # text adds the quoted message for the thread to read; own_text is what the sender wrote.
@@ -181,7 +183,7 @@ def whatsapp(paths, chat, since, tracked):
                 text += quote_block(db, chats, m['quoted_msg_id'])
             result.append(dict(source='whatsapp', account=paths.wa_account, chat=chat, msg_id=m['msg_id'],
                                sender_raw=m['sender_jid'], sender_name=m['sender_name'],
-                               is_owner=int(bool(m['from_me'])), ts=m['ts'], text=text, own_text=own,
+                               is_owner=int(bool(m['from_me'])), ts=m['ts'], text=text, own_text=own, legacy_own=legacy,
                                quoted_ids=json.dumps([m['quoted_msg_id']] if m.get('quoted_msg_id') else []),
                                attachments_json=json.dumps([a for a in attachments if a]),
                                edited=int(bool(m['edited'])), deleted=int(bool(m['revoked'] or m.get('deleted_for_me')))))
