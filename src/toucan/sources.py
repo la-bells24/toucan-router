@@ -117,6 +117,13 @@ QUOTE_CHARS = 1500  # of a quoted message's text shown with the reply that quote
 QUOTE_MEDIA = ('image', 'video', 'gif', 'audio', 'document', 'sticker')  # media wacli can quote back
 
 
+def lid_aliases(chat, mapping):
+    """The other JIDs a 1:1 chat may be stored under (its @lid or phone JID), from a LID map."""
+    if not chat.endswith(('@lid', '@s.whatsapp.net')):
+        return []
+    return sorted({jid for jid in [mapping.get(chat), *(lid for lid, pn in mapping.items() if pn == chat)] if jid and jid != chat})
+
+
 def chat_aliases(paths, chat):
     """The other JIDs a 1:1 chat may be stored under (its @lid or phone JID), from the session's LID map."""
     if not chat.endswith(('@lid', '@s.whatsapp.net')):
@@ -125,7 +132,7 @@ def chat_aliases(paths, chat):
         mapping = lid_map(paths)
     except (OSError, sqlite3.Error):
         return []
-    return sorted({jid for jid in [mapping.get(chat), *(lid for lid, pn in mapping.items() if pn == chat)] if jid and jid != chat})
+    return lid_aliases(chat, mapping)
 
 
 def quote_block(db, chats, msg_id):

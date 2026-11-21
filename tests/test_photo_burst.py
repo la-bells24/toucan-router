@@ -5,7 +5,7 @@ from toucan import router
 from toucan.cli import main
 from toucan.core import App
 from toucan.storage import connect
-from conftest import OTHER, PHONE
+from conftest import LID, OTHER, PHONE
 
 PHOTO = dict(text='', display_text='Sent image', media_type='image', filename='photo.jpg')
 
@@ -54,6 +54,14 @@ def test_a_photo_in_a_later_sync_joins_a_request_that_is_still_new(world):
     row = world.app.get(req)
     assert row['change_pending'] == 1 and row['wakes'] == 1
     assert world.app.rows("SELECT kind FROM events WHERE kind='photo_merged'") == [dict(kind='photo_merged')]
+
+
+def test_a_photo_stored_under_the_chats_other_jid_joins_the_request(world):
+    burst(world)
+    world.wa('text', sender=LID, chat_jid=LID, ts=world.now - 5, text='Add this product please')
+    world.wa('photo', **PHOTO)  # the same 1:1 chat, stored under the phone JID
+    req, = world.app.sync()['created']
+    assert linked(world) == {'photo': req}
 
 
 def test_photos_never_join_claimed_late_split_or_other_peoples_requests(world):

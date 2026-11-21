@@ -148,15 +148,18 @@ class App:
         report['created'].append(req)
         route_result['created'].append(dict(request=req, msg_id=m['msg_id'], chat=m['chat'], person=m['sender_key']))
 
-    def merge_photo(self, m, route, now, route_result):
+    def merge_photo(self, m, route, now, route_result, mapping):
         """Link a caption-less photo to the request of the same person's message just before it in the chat,
         when that came at most photo_burst_seconds earlier and its request is still new: one request, not
         one per photo. The request must be unclaimed, not held by the live router and not split into parts.
         Text always makes its own request. Returns the request, or None when the photo needs its own."""
         # Any route: a card's "more" in this chat is stored with none, and a photo after it joins nothing.
-        prev = self.db.execute('SELECT id,route,ts,deleted FROM messages WHERE source=? AND chat=? AND sender_key=? AND id!=? '
-                               'AND (ts<? OR (ts=? AND id<?)) ORDER BY ts DESC,id DESC LIMIT 1',
-                               (m['source'], m['chat'], m['sender_key'], m['id'], m['ts'], m['ts'], m['id'])).fetchone()
+        # wacli may store one 1:1 chat under its phone JID and its @lid; both count.
+        chats = [m['chat'], *sources.lid_aliases(m['chat'], mapping)]
+        marks = ','.join('?' for _ in chats)
+        prev = self.db.execute(f'SELECT id,route,ts,deleted FROM messages WHERE source=? AND chat IN ({marks}) AND sender_key=? '
+                               'AND id!=? AND (ts<? OR (ts=? AND id<?)) ORDER BY ts DESC,id DESC LIMIT 1',
+                               (m['source'], *chats, m['sender_key'], m['id'], m['ts'], m['ts'], m['id'])).fetchone()
         if (not prev or prev['route'] != route['name'] or prev['deleted']
                 or m['ts'] - prev['ts'] > route['photo_burst_seconds']):
             return None
@@ -424,7 +427,8 @@ class App:
                     old = None if command else self.stored_message(m, route)
                     if command or (not old and m['deleted']):
                         if burst:
-                            unstored.add((m['chat'], sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping)))
+                            unstored.add((mapping.get(m['chat'], m['chat']),
+                                          sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping)))
                         continue  # a pass or losing answer must not become a routed request; nor a message deleted unseen
                     m['sender_key'] = ('toucan' if m['source'] == 'whatsapp' and m['is_owner'] else
                                        sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping))
@@ -432,10 +436,10 @@ class App:
                         problems['identity:' + m['sender_raw']] = 'Unresolved WhatsApp sender; stored as context only'
                     asks = seeded and not m['deleted'] and m['ts'] != 0 and m['ts'] >= cutoff and not m['is_owner'] and m['sender_key'] in route['requesters']
                     if m['source'] == 'whatsapp' and not self.voice(m, m['chat'], m['msg_id']) and asks and not old:
-                        unstored.add((m['chat'], m['sender_key']))
+                        unstored.add((mapping.get(m['chat'], m['chat']), m['sender_key']))
                         continue  # a voice note becomes a request once transcribe() has its text
-                    after_skip = (m['chat'], m['sender_key']) in unstored
-                    unstored.discard((m['chat'], m['sender_key']))
+                    after_skip = (mapping.get(m['chat'], m['chat']), m['sender_key']) in unstored
+                    unstored.discard((mapping.get(m['chat'], m['chat']), m['sender_key']))
                     if old:
                         if m['deleted'] and not m['text']:
                             m['text'], m['own_text'] = old['text'], old['own_text']
@@ -480,7 +484,7 @@ class App:
                                     (not m['sender_raw'] or m['sender_key'] in route['requesters']) else None)
                         m['id'] = insert(self.db, 'messages', **m, route=route['name'], first_seen=now, last_seen=now,
                                          deferred_cutoff=deferred)
-                        if asks and not (bare and burst and not after_skip and self.merge_photo(m, route, now, route_result)):
+                        if asks and not (bare and burst and not after_skip and self.merge_photo(m, route, now, route_result, mapping)):
                             self.new_request(m, route, mapping, report, route_result)
                     report['ingested'] += 1
                 for key, latest in watermarks.items():
