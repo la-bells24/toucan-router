@@ -39,7 +39,8 @@ ACK_PER_SYNC = 4  # toucan-bot reaction calls per sync (a message's swap may fin
 ACK_TIMEOUT = 15  # seconds per toucan-bot call
 REPLIED = ('replied', 'owner replied', 'owner posted')  # close reasons that mean the person got an answer
 ANSWER_FOLLOWUP_SECONDS = 600  # an unquoted owner message this soon after a card's answer still adds to it
-# wacli's refusals to build a reply's quote; it checks the quote before sending, so nothing went out.
+# wacli's refusals to build a reply's quote. It checks the quote before it sends anything (a file
+# reply's media is already uploaded by then, but nothing reaches the chat), so the reply was not sent.
 QUOTE_REFUSED = re.compile(r'quoted|cannot quote|reply-to-sender', re.I)
 
 
@@ -1611,7 +1612,7 @@ class App:
             # quote_replies: a WhatsApp reply quotes the request's message, only in the chat that message is in.
             quote = (message['msg_id'] if kind == 'send' and not as_bot and route.get('quote_replies') and
                      message['source'] == 'whatsapp' and row['reply_source'] == 'whatsapp' and
-                     sources.quotable(self.paths, message['chat'], message['msg_id'], recipient) else None)
+                     sources.quotable(self.paths, message['chat'], message['msg_id'], recipient, file=bool(file)) else None)
             out = self._queue_delivery(req, row['thread'], kind, 'teams-bot' if as_bot else 'whatsapp', recipient, body, file,
                                        override=override, quote=quote)
             if card_row:
@@ -1803,7 +1804,8 @@ class App:
         try:
             result = self.fx.run(quoted)
             if quoted is not argv and result.returncode and QUOTE_REFUSED.search(result.stderr or ''):
-                # wacli checks the quote before it sends anything, so this reply was not sent: send it unquoted.
+                # wacli refused the quote before sending (for a file, after uploading the media but before
+                # sending it), so this reply was not sent: send it unquoted.
                 with self.transaction():
                     self.record('quote_dropped', thread, req, outbox=out, error=(result.stderr or '')[:500])
                 result = self.fx.run(argv)

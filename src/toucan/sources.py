@@ -167,11 +167,15 @@ def whatsapp(paths, chat, since, tracked):
     return result
 
 
-def quotable(paths, chat, msg_id, to):
+def quotable(paths, chat, msg_id, to, file=False):
     """Whether a send to `to` can quote this stored message: it is the same conversation (a 1:1 chat
     may be stored under the person's LID and sent to their phone JID), and wacli has what it needs
-    to rebuild the quote. wacli refuses the whole send otherwise, so anything unsure is False."""
+    to rebuild the quote. wacli refuses the whole send otherwise, so anything unsure is False.
+    wacli's file replies look the message up only under `--to` and quote it by ID and sender alone,
+    so a file reply quotes only in the exact chat the message is stored under, with its sender known."""
     try:
+        if to != chat and file:
+            return False
         if to != chat:
             mapping = lid_map(paths)
             if mapping.get(chat, chat) != mapping.get(to, to):
@@ -188,6 +192,8 @@ def quotable(paths, chat, msg_id, to):
     m = dict(row)
     if (m.get('from_me') or m.get('revoked') or m.get('deleted_for_me') or m.get('reaction_to_id')
             or (m.get('buttons') or '').strip() not in ('', '[]', 'null')):
+        return False
+    if file and not (m.get('sender_jid') or '').strip():
         return False
     if m.get('media_type'):
         return (m['media_type'].strip().lower() in QUOTE_MEDIA and

@@ -110,10 +110,12 @@ router reads only the sender's own words for project names.
 
 `quote_replies = true` on a WhatsApp route sends each reply to a request as a WhatsApp reply
 that quotes the request's message (`wacli send --reply-to`), so the person sees which message
-it answers. It applies only when the reply goes to the chat the message came from (a 1:1
-chat's phone and `@lid` JIDs count as one), and only when wacli has the message's content to
-quote. If wacli refuses the quote anyway, it does so before sending, and Toucan sends the reply
-unquoted and records a `quote_dropped` event. It is off by default.
+it answers. It applies only when the reply goes to the chat the message came from, and only
+when wacli has the message's content to quote. For a text reply a 1:1 chat's phone and `@lid`
+JIDs count as one chat; a file reply quotes only when it goes to the exact JID the message is
+stored under. If wacli refuses the quote anyway, it does so before sending (for a file, after
+uploading it), and Toucan sends the reply unquoted and records a `quote_dropped` event. It is
+off by default.
 
 ```sh
 toucan config set routes.alice-whatsapp.quote_replies true --json

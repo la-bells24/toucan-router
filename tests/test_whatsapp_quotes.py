@@ -116,13 +116,23 @@ def test_replies_quote_the_request_only_when_the_route_asks(world):
     assert [r['quote_id'] for r in world.db.execute('SELECT quote_id FROM outbox ORDER BY id')] == [None, 'quoted', 'quoted']
 
 
-def test_a_request_from_the_lid_chat_is_quoted_in_the_reply_to_the_phone_chat(world):
+def test_a_request_from_the_lid_chat_is_quoted_in_a_text_reply_to_the_phone_chat_but_not_in_a_file_reply(world):
+    # wacli's text replies also look the quote up under the other JID of a 1:1 chat; its file replies don't.
     configure(world, 'quote_replies = true\n')
     world.seed()
     world.wa('lid-msg', chat_jid=LID, sender=LID)
     req = world.app.sync()['created'][0]
-    world.app.deliver(req, world.app.claim([req], 'project-a'), text='Yes')
+    claim = world.app.claim([req], 'project-a')
+    world.app.deliver(req, claim, text='Yes', promise='the file', due=world.now + 3600)
     assert world.sends[-1][-6:] == ['--to', PHONE, '--message', 'Yes', '--reply-to', 'lid-msg']
+    file = world.root / 'invoice.pdf'
+    file.write_bytes(b'%PDF')
+    world.app.deliver(req, claim, file=file, caption='Here')
+    assert world.sends[-1][3:6] == ['file', '--to', PHONE] and '--reply-to' not in world.sends[-1]
+    world.advance(60)
+    req = world.request('phone-msg')
+    world.app.deliver(req, world.app.claim([req], 'project-a'), file=file, caption='Here')
+    assert world.sends[-1][-2:] == ['--reply-to', 'phone-msg']
 
 
 def test_a_reply_that_goes_to_another_chat_or_cannot_be_quoted_is_sent_unquoted(world):
