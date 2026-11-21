@@ -102,6 +102,19 @@ def test_a_photo_after_a_voice_note_still_being_transcribed_joins_nothing(world)
     assert linked(world) == {}
 
 
+def test_a_photo_after_a_card_command_joins_nothing(world):
+    burst(world)
+    world.request('text')
+    world.advance(5)
+    # A card answer from someone who is also a requester here; card handling already used it up.
+    world.db.execute('INSERT INTO meta VALUES (?,?)', (f'card-command:{PHONE}:pass', '1'))
+    world.wa('pass', text='pass')
+    world.advance(5)
+    world.wa('photo', **PHOTO)
+    assert len(world.app.sync()['created']) == 1
+    assert linked(world) == {}
+
+
 def test_a_request_split_after_a_photo_joined_takes_no_more(world):
     burst(world)
     req = world.request('text')

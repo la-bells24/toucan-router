@@ -417,15 +417,13 @@ class App:
                 for m in batch:
                     legacy_own = m.pop('legacy_own', None)
                     bare = m.pop('bare_photo', False)
-                    if m['source'] == 'whatsapp' and self.db.execute(
-                            'SELECT 1 FROM meta WHERE key=?',
-                            ('card-command:' + m['chat'] + ':' + m['msg_id'],)).fetchone():
-                        continue  # a pass or losing answer must not become a routed request
-                    old = self.stored_message(m, route)
-                    if not old and m['deleted']:
+                    command = m['source'] == 'whatsapp' and self.db.execute(
+                        'SELECT 1 FROM meta WHERE key=?', ('card-command:' + m['chat'] + ':' + m['msg_id'],)).fetchone()
+                    old = None if command else self.stored_message(m, route)
+                    if command or (not old and m['deleted']):
                         if burst:
                             unstored.add((m['chat'], sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping)))
-                        continue
+                        continue  # a pass or losing answer must not become a routed request; nor a message deleted unseen
                     m['sender_key'] = ('toucan' if m['source'] == 'whatsapp' and m['is_owner'] else
                                        sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping))
                     if not m['is_owner'] and not m['sender_key'] and (m['sender_raw'] or '').endswith('@lid'):
