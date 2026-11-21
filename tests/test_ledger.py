@@ -170,6 +170,19 @@ def test_other_threads_sends_are_not_this_projects(world):
     assert ledger.replay(world.app, 'project-a', 0)['checked'] == 1
 
 
+def test_a_merged_photo_follows_its_request_to_another_project(world):
+    hook = world.root / 'b.hook'
+    hook.write_text('https://hook.invalid/api/hooks/b/SECRET-TOKEN')
+    hook.chmod(0o600)
+    setup(world, routes=f'photo_burst_seconds = 30\n\n[threads.project-b]\nhook_file = "{hook}"\n')
+    world.advance(30)
+    world.wa('ask', chat_jid=OTHER, sender=OTHER, ts=world.now - 5, text='Check this layout')
+    world.wa('photo', chat_jid=OTHER, sender=OTHER, text='', display_text='Sent image', media_type='image')
+    req, = world.app.sync()['created']
+    world.app.forward(req, 'project-b', 'project-a')
+    assert [i['text'] for i in ledger.timeline(world.app, 'project-a', world.now - 60, github=False) if i['direction'] == 'in'] == []
+
+
 def test_sends_to_people_outside_the_project_are_not_checked(world):
     setup(world, people=['other'], pel='other')
     to_alice(world, WIREFRAMES)

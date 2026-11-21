@@ -2019,6 +2019,8 @@ class App:
                 old = self.stored_message(m, route)
                 m['sender_key'] = person
                 m['id'] = old['id'] if old else insert(self.db, 'messages', **m, route=route_name, first_seen=self.fx.now(), last_seen=self.fx.now())
-                if not self.db.execute('SELECT 1 FROM requests WHERE message_id=?', (m['id'],)).fetchone():
+                # A photo that joined a request (request_messages) already has one.
+                if not self.db.execute('SELECT 1 FROM requests WHERE message_id=? UNION ALL '
+                                       'SELECT 1 FROM request_messages WHERE message_id=?', (m['id'], m['id'])).fetchone():
                     created.append(self.create_request(m, route, mapping))
         return created

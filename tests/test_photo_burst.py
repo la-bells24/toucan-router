@@ -162,3 +162,11 @@ def test_inbox_cli_marks_a_merged_photo(world, monkeypatch, capsys):
     assert main(['inbox', '--thread', 'project-a'], effects=world.fx, paths=world.paths) == 0
     out = capsys.readouterr().out
     assert 'a photo sent right after its message, part of the same request' in out
+
+
+def test_import_pending_leaves_a_merged_photo_in_its_request(world):
+    burst(world)
+    world.wa('text', ts=world.now - 5, text='Add this product please')
+    world.wa('photo', **PHOTO)
+    assert len(world.app.sync()['created']) == 1
+    assert world.app.import_pending('alice-whatsapp', world.now - 60) == []
