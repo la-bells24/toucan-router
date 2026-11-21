@@ -402,8 +402,9 @@ class App:
                                     json.loads(old['mentions_json'] or '[]') != json.loads(m['mentions_json']))
                         # A WhatsApp quote that only now resolves (or whose quoted message changed) is not an
                         # edit of the request: compare what the sender wrote.
-                        said = 'own_text' if m['source'] == 'whatsapp' and old['own_text'] is not None else 'text'
-                        changed = (retagged or old[said] != m[said] or any(old[k] != m[k] for k in ('edited', 'deleted')) or
+                        said = (old['own_text'] if old['own_text'] is not None else old['text'],
+                                m['own_text']) if m['source'] == 'whatsapp' else (old['text'], m['text'])
+                        changed = (retagged or said[0] != said[1] or any(old[k] != m[k] for k in ('edited', 'deleted')) or
                                    attachment_content(old['attachments_json']) != attachment_content(m['attachments_json']))
                         ready = (sum(bool(a.get('local_path')) for a in json.loads(m['attachments_json'] or '[]')) >
                                  sum(bool(a.get('local_path')) for a in json.loads(old['attachments_json'] or '[]')))

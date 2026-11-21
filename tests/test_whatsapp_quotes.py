@@ -57,11 +57,15 @@ def test_a_quoted_photo_shows_its_caption_and_file_and_our_own_messages_are_mark
     world.wa('r2', text='this one', quoted_msg_id='photo')
     world.wa('r3', text='ok, both', quoted_msg_id='ours')
     world.wa('r4', text='and this', quoted_msg_id='bare')
+    # wacli puts the quoted text above an uncaptioned photo's label in display_text; it is not the sender's.
+    world.wa('r5', text='', display_text='> We have two left\nSent image', media_type='image', quoted_msg_id='ours')
     world.app.sync()
     text = {r['msg_id']: r['text'] for r in world.db.execute('SELECT msg_id,text FROM messages')}
     assert text['r2'] == 'this one\n\nQuote (from Alice Example):\n> The blue one\n> [image mug.jpg] /media/mug.jpg'
     assert text['r3'] == 'ok, both\n\nQuote (sent from this number):\n> We have two left'
     assert text['r4'] == 'and this\n\nQuote (from Alice Example):\n> [image] not downloaded'
+    r5 = world.db.execute("SELECT text,own_text FROM messages WHERE msg_id='r5'").fetchone()
+    assert (r5['own_text'], r5['text']) == ('Sent image', 'Sent image\n\nQuote (sent from this number):\n> We have two left')
 
 
 def test_a_quote_missing_from_the_store_is_named_and_filling_it_in_later_is_not_an_edit(world):
@@ -75,6 +79,14 @@ def test_a_quote_missing_from_the_store_is_named_and_filling_it_in_later_is_not_
     world.app.sync()
     assert message(world, req)['text'].endswith('Quote (from Alice Example):\n> Two boxes of tea')
     assert world.app.get(req)['source_changed'] == 0 and world.app.get(req)['change_pending'] == 0
+
+
+def test_a_reply_in_the_phone_chat_finds_the_quoted_message_stored_under_the_lid_chat(world):
+    world.seed()
+    world.wa('old', chat_jid=LID, sender=LID, ts=world.now - DAY, text='Order 15 is a blue mug')
+    world.wa('reply', text='Is this one ready?', quoted_msg_id='old')
+    req = world.app.sync()['created'][-1]
+    assert message(world, req)['text'] == 'Is this one ready?\n\nQuote (from Alice Example):\n> Order 15 is a blue mug'
 
 
 def test_a_deleted_quote_and_a_long_quote(world):

@@ -117,11 +117,27 @@ QUOTE_CHARS = 1500  # of a quoted message's text shown with the reply that quote
 QUOTE_MEDIA = ('image', 'video', 'gif', 'audio', 'document', 'sticker')  # media wacli can quote back
 
 
-def quote_block(db, chat, msg_id):
+def chat_aliases(paths, chat):
+    """The other JIDs a 1:1 chat may be stored under (its @lid or phone JID), from the session's LID map."""
+    if not chat.endswith(('@lid', '@s.whatsapp.net')):
+        return []
+    try:
+        mapping = lid_map(paths)
+    except (OSError, sqlite3.Error):
+        return []
+    return sorted({jid for jid in [mapping.get(chat), *(lid for lid, pn in mapping.items() if pn == chat)] if jid and jid != chat})
+
+
+def quote_block(db, chats, msg_id):
     """The message a WhatsApp reply quotes, as clearly marked context below the reply's own text.
-    Read from the same store snapshot, however old it is; a quote wacli never stored says so."""
-    row = db.execute('SELECT * FROM messages WHERE chat_jid=? AND msg_id=? ORDER BY rowid DESC LIMIT 1',
-                     (chat, msg_id)).fetchone()
+    Read from the same store snapshot, however old it is; a quote wacli never stored says so.
+    `chats` are the JIDs the conversation may be stored under, the reply's own first."""
+    row = None
+    for chat in chats:
+        row = db.execute('SELECT * FROM messages WHERE chat_jid=? AND msg_id=? ORDER BY rowid DESC LIMIT 1',
+                         (chat, msg_id)).fetchone()
+        if row:
+            break
     if not row:
         return f'\n\nQuote: an earlier message ({msg_id}) that is not in the local WhatsApp store.'
     q = dict(row)
@@ -147,15 +163,22 @@ def whatsapp(paths, chat, since, tracked):
         marks = ','.join('?' for _ in tracked) or 'NULL'
         rows = db.execute(f'SELECT * FROM messages WHERE chat_jid=? AND (ts>=? OR msg_id IN ({marks}))',
                           (chat, since, *tracked)).fetchall()
-        result = []
+        result, chats = [], None
         for row in rows:
             m = dict(row)
             if noise(m):
                 continue
             attachments = [{k: m[k] for k in ('media_type', 'filename', 'local_path') if m.get(k)}]
-            own = m['text'] or m['display_text'] or m.get('media_caption') or ''
-            # text adds the quoted message for the thread to read; own_text is what the sender wrote.
-            text = own + (quote_block(db, chat, m['quoted_msg_id']) if m.get('quoted_msg_id') else '')
+            display = m['display_text'] or ''
+            if m.get('quoted_msg_id') and display.startswith('> '):
+                display = display.rsplit('\n', 1)[-1]  # wacli puts the quoted text above the message's own label
+            own = m['text'] or display or m.get('media_caption') or ''
+            text = own
+            if m.get('quoted_msg_id'):
+                # text adds the quoted message for the thread to read; own_text is what the sender wrote.
+                # A 1:1 reply may be stored under the phone JID while the message it quotes is under the LID.
+                chats = chats or [chat, *chat_aliases(paths, chat)]
+                text += quote_block(db, chats, m['quoted_msg_id'])
             result.append(dict(source='whatsapp', account=paths.wa_account, chat=chat, msg_id=m['msg_id'],
                                sender_raw=m['sender_jid'], sender_name=m['sender_name'],
                                is_owner=int(bool(m['from_me'])), ts=m['ts'], text=text, own_text=own,
