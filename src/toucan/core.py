@@ -153,10 +153,12 @@ class App:
         when that came at most photo_burst_seconds earlier and its request is still new: one request, not
         one per photo. The request must be unclaimed, not held by the live router and not split into parts.
         Text always makes its own request. Returns the request, or None when the photo needs its own."""
-        prev = self.db.execute('SELECT id,ts,deleted FROM messages WHERE route=? AND chat=? AND sender_key=? AND id!=? '
+        # Any route: a card's "more" in this chat is stored with none, and a photo after it joins nothing.
+        prev = self.db.execute('SELECT id,route,ts,deleted FROM messages WHERE source=? AND chat=? AND sender_key=? AND id!=? '
                                'AND (ts<? OR (ts=? AND id<?)) ORDER BY ts DESC,id DESC LIMIT 1',
-                               (route['name'], m['chat'], m['sender_key'], m['id'], m['ts'], m['ts'], m['id'])).fetchone()
-        if not prev or prev['deleted'] or m['ts'] - prev['ts'] > route['photo_burst_seconds']:
+                               (m['source'], m['chat'], m['sender_key'], m['id'], m['ts'], m['ts'], m['id'])).fetchone()
+        if (not prev or prev['route'] != route['name'] or prev['deleted']
+                or m['ts'] - prev['ts'] > route['photo_burst_seconds']):
             return None
         # Through the request's own message, so a request the router split after an earlier photo joined counts as split.
         reqs = self.rows('SELECT id,thread,state,routing FROM requests WHERE message_id=COALESCE((SELECT r.message_id '

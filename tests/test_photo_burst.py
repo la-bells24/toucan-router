@@ -115,6 +115,20 @@ def test_a_photo_after_a_card_command_joins_nothing(world):
     assert linked(world) == {}
 
 
+def test_a_photo_after_a_cards_more_joins_nothing(world):
+    burst(world)
+    world.request('text')
+    world.advance(5)
+    # Card handling stores a "more" with no route; once sync has read it, it carries the person's key.
+    world.db.execute("INSERT INTO messages (source,account,chat,msg_id,route,sender_key,is_owner,ts,text,deleted) "
+                     "SELECT source,account,chat,'more',NULL,sender_key,1,?,'more T1',0 FROM messages WHERE msg_id='text'",
+                     (world.now,))
+    world.advance(5)
+    world.wa('photo', **PHOTO)
+    assert len(world.app.sync()['created']) == 1
+    assert linked(world) == {}
+
+
 def test_a_request_split_after_a_photo_joined_takes_no_more(world):
     burst(world)
     req = world.request('text')
