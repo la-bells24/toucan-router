@@ -404,7 +404,10 @@ class App:
                         # edit of the request: compare what the sender wrote.
                         said = (old['own_text'] if old['own_text'] is not None else old['text'],
                                 m['own_text']) if m['source'] == 'whatsapp' else (old['text'], m['text'])
-                        changed = (retagged or said[0] != said[1] or any(old[k] != m[k] for k in ('edited', 'deleted')) or
+                        # Stored before the quote was kept apart: wacli's "> quoted" line above a media label.
+                        legacy = (m['source'] == 'whatsapp' and m['quoted_ids'] != '[]' and (said[0] or '').startswith('> ')
+                                  and said[0].rsplit('\n', 1)[-1] == said[1])
+                        changed = (retagged or (said[0] != said[1] and not legacy) or any(old[k] != m[k] for k in ('edited', 'deleted')) or
                                    attachment_content(old['attachments_json']) != attachment_content(m['attachments_json']))
                         ready = (sum(bool(a.get('local_path')) for a in json.loads(m['attachments_json'] or '[]')) >
                                  sum(bool(a.get('local_path')) for a in json.loads(old['attachments_json'] or '[]')))
