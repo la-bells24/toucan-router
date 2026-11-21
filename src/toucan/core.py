@@ -158,8 +158,10 @@ class App:
                                (route['name'], m['chat'], m['sender_key'], m['id'], m['ts'], m['ts'], m['id'])).fetchone()
         if not prev or prev['deleted'] or m['ts'] - prev['ts'] > route['photo_burst_seconds']:
             return None
-        reqs = self.rows('SELECT id,thread,state,routing FROM requests WHERE message_id=? OR id IN '
-                         '(SELECT request_id FROM request_messages WHERE message_id=?)', (prev['id'], prev['id']))
+        # Through the request's own message, so a request the router split after an earlier photo joined counts as split.
+        reqs = self.rows('SELECT id,thread,state,routing FROM requests WHERE message_id=COALESCE((SELECT r.message_id '
+                         'FROM request_messages l JOIN requests r ON r.id=l.request_id WHERE l.message_id=?),?)',
+                         (prev['id'], prev['id']))
         if len(reqs) != 1 or reqs[0]['state'] != 'new' or reqs[0]['routing'] is not None:
             return None
         req = reqs[0]
@@ -405,8 +407,13 @@ class App:
                     problems['health:route:' + route['name']] = f'{route["name"]}: archive unavailable or locked; skipped'
                     continue
                 route_result = dict(route=route['name'], messages=len(batch), seeded=not bool(seeded), created=[], merged=[])
-                photos = []  # caption-less photos that may join the request before them, once the batch is stored
                 report['routes'].append(route_result)
+                burst = route.get('photo_burst_seconds')
+                if burst:
+                    # In time order, so a photo meets the message before it already stored, and a message
+                    # quoting a photo of this batch finds the request the photo joined.
+                    batch.sort(key=lambda m: m['ts'] or 0)
+                unstored = set()  # (chat, person) whose latest message here was skipped: a photo after it joins nothing
                 for m in batch:
                     legacy_own = m.pop('legacy_own', None)
                     bare = m.pop('bare_photo', False)
@@ -416,6 +423,8 @@ class App:
                         continue  # a pass or losing answer must not become a routed request
                     old = self.stored_message(m, route)
                     if not old and m['deleted']:
+                        if burst:
+                            unstored.add((m['chat'], sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping)))
                         continue
                     m['sender_key'] = ('toucan' if m['source'] == 'whatsapp' and m['is_owner'] else
                                        sources.person_for(self.cfg, m['source'], m['sender_raw'], mapping))
@@ -423,7 +432,10 @@ class App:
                         problems['identity:' + m['sender_raw']] = 'Unresolved WhatsApp sender; stored as context only'
                     asks = seeded and not m['deleted'] and m['ts'] != 0 and m['ts'] >= cutoff and not m['is_owner'] and m['sender_key'] in route['requesters']
                     if m['source'] == 'whatsapp' and not self.voice(m, m['chat'], m['msg_id']) and asks and not old:
+                        unstored.add((m['chat'], m['sender_key']))
                         continue  # a voice note becomes a request once transcribe() has its text
+                    after_skip = (m['chat'], m['sender_key']) in unstored
+                    unstored.discard((m['chat'], m['sender_key']))
                     if old:
                         if m['deleted'] and not m['text']:
                             m['text'], m['own_text'] = old['text'], old['own_text']
@@ -468,15 +480,9 @@ class App:
                                     (not m['sender_raw'] or m['sender_key'] in route['requesters']) else None)
                         m['id'] = insert(self.db, 'messages', **m, route=route['name'], first_seen=now, last_seen=now,
                                          deferred_cutoff=deferred)
-                        if asks and bare and route.get('photo_burst_seconds'):
-                            photos.append(m)
-                        elif asks:
+                        if asks and not (bare and burst and not after_skip and self.merge_photo(m, route, now, route_result)):
                             self.new_request(m, route, mapping, report, route_result)
                     report['ingested'] += 1
-                # In time order, so each photo of an album can join the request the one before it joined.
-                for m in sorted(photos, key=lambda m: (m['ts'], m['id'])):
-                    if not self.merge_photo(m, route, now, route_result):
-                        self.new_request(m, route, mapping, report, route_result)
                 for key, latest in watermarks.items():
                     self.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(latest)))
                 if not seeded:

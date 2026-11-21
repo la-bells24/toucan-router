@@ -91,6 +91,32 @@ def test_a_request_split_across_threads_or_held_by_the_router_takes_no_photos(wo
     assert linked(world) == {}
 
 
+def test_a_photo_after_a_voice_note_still_being_transcribed_joins_nothing(world):
+    burst(world)
+    world.app.settings['transcribe'] = 'transcribe-test'
+    world.transcript = (1, '')  # the transcript isn't ready yet
+    world.wa('text', ts=world.now - 20, text='Add this product please')
+    world.wa('voice', ts=world.now - 10, text='', display_text='[Audio]', media_type='audio')
+    world.wa('photo', **PHOTO)
+    assert len(world.app.sync()['created']) == 2  # the text and the photo; the voice note comes once transcribed
+    assert linked(world) == {}
+
+
+def test_a_request_split_after_a_photo_joined_takes_no_more(world):
+    burst(world)
+    req = world.request('text')
+    world.advance(5)
+    world.wa('photo-1', **PHOTO)
+    world.app.sync()
+    # The router split it later (after a bounce): a second part on the same message.
+    world.db.execute("INSERT INTO requests (message_id,route,thread,state,created_at) "
+                     "SELECT message_id,route,'project-b',state,created_at FROM requests WHERE id=?", (req,))
+    world.advance(5)
+    world.wa('photo-2', **PHOTO)
+    assert len(world.app.sync()['created']) == 1
+    assert linked(world) == {'photo-1': req}
+
+
 def test_off_by_default_and_text_always_makes_its_own_request(world):
     world.seed()
     world.advance(30)

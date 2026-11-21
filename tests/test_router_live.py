@@ -363,6 +363,19 @@ def test_a_split_message_is_no_single_thread_to_quote_or_follow(world):
     assert history(world, quote)[0][:2] == (3, 'followup')  # not step 1: the quoted message went to two threads
 
 
+def test_a_quote_of_a_photo_in_the_same_sync_follows_the_request_it_joined(world):
+    live(world).seed()
+    next(r for r in world.cfg['routes'] if r['name'] == 'alice-whatsapp')['photo_burst_seconds'] = 30
+    world.advance(60)
+    world.wa('m1', ts=world.now - 30, text='fix the portal')
+    world.wa('photo', ts=world.now - 25, text='', display_text='Sent image', media_type='image')
+    world.wa('m2', ts=world.now - 20, text='rerun billing')
+    world.wa('m3', ts=world.now - 10, text='use the blue one', quoted_msg_id='photo')
+    first, second, quote = world.app.sync()['created']
+    assert [request(world, r)[0] for r in (first, second)] == ['project-a', 'project-b']
+    assert history(world, quote)[0][:2] == (1, 'reply') and request(world, quote)[0] == 'project-a'
+
+
 def test_an_escalated_part_comes_back_alone(world):
     live(world, [answer(**SPLIT)]).seed()
     world.wa('m1', text='fix the portal and rerun billing')
