@@ -553,7 +553,8 @@ the state folder the way you would any other private data.
 
 `toucan-bot status --json` reads the local store without contacting Microsoft. Its `catchup`
 object reports the interval and each non-personal chat's cursor, last success age, last
-error, HTTP status and stale flag. Its `delivery` object counts messages from the last 24
+error, HTTP status, stale flag and `removed` time. A chat the app was removed from is
+skipped by catch-up and is neither stale nor failing. Its `delivery` object counts messages from the last 24
 hours first seen by Graph with no live delivery after a five-minute grace period. Historical
 first-run recovery can contribute to this count. Application posts count in `graph_only`
 but not `ordinary_graph_only`; they are context only in the router.
@@ -561,7 +562,8 @@ but not `ordinary_graph_only`; they are context only in the router.
 `toucan doctor` adds `teams.catchup` and `teams.delivery` in the normal doctor item format.
 `teams.catchup` covers routed chats only and names the route. It warns after an HTTP 401 or
 403, after other failures or no success for longer than the greater of five minutes and three
-configured intervals, for never-synced chats, and when the bot has not seen a routed chat.
+configured intervals, for never-synced chats, when the bot has not seen a routed chat, and
+when the app was removed from a routed chat.
 An unavailable schema or store is a todo. `toucan sync` raises the same problems as alerts,
 one per route (`teams:catchup:ROUTE`), once until they recover. A 403 there means only
 @mentions reach Toucan in that chat; the alert says to upgrade the app and accept its
@@ -570,6 +572,7 @@ when an ordinary message is pushed in the chat. A chat that has never synced is 
 ended after the bot first saw it, or at the latest three intervals (at least five minutes)
 after the later of bot start and first sight, with the catch-up task's error if it keeps
 failing. A restart therefore raises no false alert, and a failing catch-up still shows.
+A routed chat the app was removed from raises its own alert, `teams:removed:ROUTE`.
 Conversations no route uses never raise router alerts. Missing ordinary push delivery warns that Toucan depends on catch-up
 latency. Zero observed gaps does not prove delivery, and a fresh heartbeat proves only that
 the process is running. Inspect these items separately from `teams.fresh`.
@@ -580,7 +583,8 @@ warns for failed or stale tasks; missing records require restarting the upgraded
 Heartbeat, expiry, catch-up, Connector and Graph media retries, and roster refresh have separate supervised
 loops, so a persistent expiry error cannot block the other operations. Each retries failed
 iterations with asynchronous exponential backoff from one to 60
-seconds. A SQLite lock causes rollback and retry, rather than stopping maintenance.
+seconds. An iteration that runs for more than an hour is stopped and recorded as
+`TimeoutError`, so a request that never answers cannot stall a task without a trace. A SQLite lock causes rollback and retry, rather than stopping maintenance.
 The HTTP loop uses a zero SQLite busy timeout. Failures log only their class, not exception
 text. If another writer also blocks health persistence, `/healthz` reports the failure from
 memory; status and doctor retain the previous success until its age becomes stale. The
