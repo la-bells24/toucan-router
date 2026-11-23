@@ -71,6 +71,38 @@ A harness of our own would mean a new agent to trust, configure and pay for. Tou
 the part no harness does: making sure each request from a colleague gets taken, answered,
 followed up when promised, or escalated to you.
 
+## Can't I do all of this in T3 Code on its own?
+
+Some of it, yes. Every T3 Code thread can already:
+
+- run a scheduled task on an interval, at a set time, or when something POSTs to the task's
+  webhook URL;
+- message other threads, and start new threads and subagents on another harness;
+- be reached from T3 Code's phone app.
+
+If you are the only person who talks to your agents, that is enough and you don't need Toucan.
+
+Toucan is for requests from other people, sent in chats T3 Code doesn't read. T3 Code has no
+WhatsApp, Teams or email connection. A webhook task wakes a thread, but it doesn't know who
+asked or whether anyone answered. To get what Toucan does from T3 Code alone, you would have to
+write and run the rest yourself:
+
+| | T3 Code on its own | With Toucan |
+|---|---|---|
+| Reading chats | Nothing reads WhatsApp, Teams or email. You'd need your own program to read each chat and POST to the webhook. | Reads wacli, the Teams bot's store and notmuch, read-only. |
+| Who can ask | Anyone whose message your program forwards. The task only knows that its URL was called. | Only requesters matched by WhatsApp JID, Entra ID or email. Everyone else stays context. |
+| Which thread | Whatever your program decides. | One owner thread per route, a router for shared chats, and `forward` or `bounce` when a thread gets the wrong request. |
+| Message text | Goes into the task prompt if you template it from the request body. | Never in the wake. The thread reads it with `toucan inbox`, marked as untrusted content. |
+| Replying | The agent needs its own way to send on WhatsApp or Teams. | `toucan reply` goes through an outbox. An interrupted send is marked uncertain and never resent, and each recipient has an hourly limit. |
+| Tracking | A run ends and nothing more happens. Nobody notices a request that was never answered. | Claims, promises with a due time, and an alert when a request goes unclaimed or a promise is overdue. |
+| Decisions for you | You read the thread to find them. | A short card on your WhatsApp, answered with "T43 B", and one list a day of what's still waiting. |
+| A busy thread | The webhook run waits until the current turn ends. | `toucan wait` reaches the thread in the middle of a turn. |
+| Rate limits | The thread stops until someone restarts it. | Toucan wakes it again when the limit ends, and hands unclaimed requests to a fallback thread on the other provider. |
+| Long threads | The harness compacts older context in place. | Toucan asks the thread to hand over to a fresh one, and claims and promises carry over. |
+
+Toucan doesn't replace any of T3 Code's features. Every wake is a T3 webhook task, and owner
+threads hand long work to subagents with T3's own tools.
+
 ## How is it different from OpenClaw, NanoClaw, Hermes Agent, TrueForge or opencode?
 
 Each of these runs the agent. Toucan passes work to agents you already run.
@@ -130,4 +162,4 @@ On a server, run `loginctl enable-linger "$USER"` once. Without it, systemd stop
 services, including the `toucan-sync` timer, when you log out of SSH. `toucan enable` doesn't
 do this for you.
 
-Descriptions of the other tools checked on 14 November 2026. Corrections welcome.
+Descriptions of the other tools checked on 14 November 2026, and of T3 Code on 23 November 2026. Corrections welcome.
