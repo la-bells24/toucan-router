@@ -91,9 +91,9 @@ only your part. Your replies start with the project name automatically. Only one
 acknowledgement reaches the person per message: if another part already had a reply, a
 `--promise` reply is recorded but not sent, so just send the result with `--final` when it is ready.
 
-On Teams, Toucan keeps one reaction on each request message to show its stage: received, working
-once you claim it, and done after your final reply. When a person sends several messages before
-Toucan answers, only the newest has it. Don't add those reactions yourself. React with `toucan
+On Teams, and on WhatsApp routes with `stage_reactions`, Toucan keeps one reaction on each request
+message to show its stage: received, working once you claim it, and done after your final reply. When a person sends several messages before
+Toucan answers, only the newest has it. Don't add those reactions yourself. On Teams, react with `toucan
 react` only when a reaction is the whole answer (thumbsup for "thanks" or "ok"); it replaces the
 stage reaction on that message.
 

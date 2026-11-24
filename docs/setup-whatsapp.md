@@ -150,6 +150,36 @@ wake. `photo_burst_seconds` must be shorter than `settings.wake_gap_minutes`; 30
 chats. `toucan sync --dry-run --json` lists the photos it would merge under each route's
 `merged`.
 
+## Stage reactions
+
+`stage_reactions = true` on a WhatsApp `act` route makes Toucan react to each request message
+so the person sees it arrived and when it is done, the same way it does on Teams routes with
+`post_as_bot`. It is off by default.
+
+```sh
+toucan config set routes.alice-whatsapp.stage_reactions true --json
+toucan config set settings.done_emoji check --json   # 👀 when it arrives, ✅ after the final reply
+```
+
+The stages come from the `ack_emoji`, `work_emoji` and `done_emoji` settings, shared with
+Teams. The default `ack_emoji = "eyes"` shows 👀 on arrival. Leave `work_emoji` empty to keep
+👀 while a thread works on it, so the person sees only received and done. Set it (for example
+to `eye`) for a separate working stage. With `done_emoji` empty, 👀 stays after the reply. A
+request closed without a reply loses its reaction.
+
+- When someone sends several messages before Toucan answers, only the newest carries the
+  reaction, at the stage of the least advanced one. With `photo_burst_seconds`, a photo that
+  joined a request is one of its messages, so an album's newest photo carries it.
+- WhatsApp keeps one reaction per sender on a message, so a new stage replaces the old one.
+  Toucan sends the reaction with `wacli send react` (`--sender` for group messages) and removes
+  it with an empty reaction.
+- Reactions go out during `toucan sync`, at most four calls a sync, never in a dry run. A
+  failed or timed-out call is retried on the next syncs, three times per stage, then `toucan
+  status` shows an `ack:` problem. Replies never wait for a reaction.
+- Messages older than two hours when Toucan first sees them get no reaction (a backlog after
+  downtime).
+- Not with `reply_to`: a reaction would show in the group that `reply_to` keeps Toucan out of.
+
 ## Your own number
 
 `settings.owner_whatsapp` is your personal number's JID. Drafts and escalations go there, and

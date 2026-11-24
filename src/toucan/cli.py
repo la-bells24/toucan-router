@@ -229,7 +229,7 @@ def parser():
             sub.add_argument('--router', help='off (default), shadow (log which thread the router would pick) or live (route)')
             for flag in ('label', 'reply-to', 'reply-prefix', 'active-from'):
                 sub.add_argument('--' + flag)
-            for flag in ('post-as-bot', 'owner-reply-closes', 'reply-via-whatsapp', 'quote-replies'):
+            for flag in ('post-as-bot', 'owner-reply-closes', 'reply-via-whatsapp', 'quote-replies', 'stage-reactions'):
                 sub.add_argument('--' + flag, action='store_true', default=None)
             sub.add_argument('--photo-burst-seconds', type=int,
                              help='WhatsApp: a photo with no caption sent this soon after the same person\'s request joins it')
@@ -589,7 +589,7 @@ def agent_command(args, effects, paths):
             names = ('name', 'aliases', 'description', 'thread')
         else:
             names = ('source', 'thread', 'mode', 'router', 'label', 'post_as_bot', 'owner_reply_closes', 'reply_to', 'reply_prefix',
-                     'reply_via_whatsapp', 'quote_replies', 'photo_burst_seconds', 'active_from')
+                     'reply_via_whatsapp', 'quote_replies', 'photo_burst_seconds', 'stage_reactions', 'active_from')
         entry = {key: getattr(args, key) for key in names if getattr(args, key) is not None}
         if args.kind == 'thread':
             entry['hook_file'] = str(agentsetup.hooks_dir() / (configedit.key_name(args.key) + '.hook'))
