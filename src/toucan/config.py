@@ -28,7 +28,7 @@ KEYS = dict(settings=set(DEFAULTS) | {'ntfy', 'telemetry', 'rotate_tokens'}, peo
             projects={'name', 'aliases', 'description', 'thread', 'escalate_to', 'escalate_from', 'escalate_wait_minutes', 'rules', 'ledger'},
             routes={'name', 'label', 'source', 'chats', 'thread', 'mode', 'requesters', 'active_from', 'router',
                     'post_as_bot', 'owner_reply_closes', 'reply_via_whatsapp', 'reply_to', 'reply_prefix', 'send_threads', 'active_ts',
-                    'quote_replies', 'photo_burst_seconds'},
+                    'quote_replies', 'photo_burst_seconds', 'stage_reactions'},
             sources={'whatsapp': {'store', 'account', 'service_unit'},
                      'teams': {'bot_db', 'stale_minutes', 'service_unit'},
                      'email': {'notmuch_config', 'stale_minutes'}}, t3={'db'})
@@ -38,6 +38,10 @@ SOURCE_DEFAULTS = dict(whatsapp=dict(store='~/.local/state/wacli', account='wa',
 TEXT_SETTINGS = {'owner_whatsapp', 'drafts_whatsapp', 'owner_teams_id', 'owner_name', 'timezone', 'alert_url', 'alert_url_file', 'upload_command', 'transcribe', 'ntfy',
                  'router_general_thread', 'thread_rules', 'pause_file', 'ack_emoji', 'work_emoji', 'done_emoji', 'done_gate'}
 LIST_SETTINGS = {'router_commands', 'owner_t3_threads'}
+# ack_emoji, work_emoji and done_emoji hold Teams reaction IDs or aliases. A WhatsApp reaction is the emoji itself.
+WHATSAPP_EMOJI = {'eye': '\U0001F441\uFE0F', 'eyes': '\U0001F440', 'check': '\u2705', 'done': '\u2705', 'pin': '\U0001F4CC',
+                  'thumbsup': '\U0001F44D', 'like': '\U0001F44D', 'heart': '\u2764\uFE0F', 'laugh': '\U0001F606',
+                  'surprised': '\U0001F62E', 'sad': '\U0001F622', 'angry': '\U0001F621'}
 
 
 class ValidationError(ValueError):
@@ -46,6 +50,17 @@ class ValidationError(ValueError):
 
 class Refused(ValueError):
     pass
+
+
+def whatsapp_emoji(value):
+    """The WhatsApp reaction for a stage emoji setting: an alias (eyes, check, ...), a Teams reaction ID
+    such as 1f440_eyes, or an emoji itself. None when it is none of those."""
+    if value in WHATSAPP_EMOJI:
+        return WHATSAPP_EMOJI[value]
+    teams = re.fullmatch(r'([0-9a-f]{4,6})_[a-z0-9_]+', value)
+    if teams and 0x2000 <= int(teams[1], 16) <= 0x10FFFF:
+        return chr(int(teams[1], 16))
+    return value if value and not re.search(r'[\x00-\x7f]', value) else None
 
 
 def timestamp(value):
@@ -232,7 +247,7 @@ def validate(cfg):
         if route['source'] == 'email':
             if route['mode'] != 'draft':
                 raise ValidationError(f'route {name}: email is read-only, Toucan never sends email')
-            if any(k in route for k in ('post_as_bot', 'owner_reply_closes', 'reply_to', 'reply_via_whatsapp', 'quote_replies')):
+            if any(k in route for k in ('post_as_bot', 'owner_reply_closes', 'reply_to', 'reply_via_whatsapp', 'quote_replies', 'stage_reactions')):
                 raise ValidationError(f'route {name}: reply delivery options are invalid on email routes')
         if 'reply_via_whatsapp' in route and (type(route['reply_via_whatsapp']) is not bool or route['source'] != 'teams' or route['mode'] != 'act'):
             raise ValidationError(f'route {name}: reply_via_whatsapp is only valid on Teams act routes and must be a boolean')
@@ -269,6 +284,15 @@ def validate(cfg):
         if 'reply_to' in route and (route['source'] != 'whatsapp' or route['mode'] != 'act' or not reply_phone(cfg, route)):
             raise ValidationError(f'route {name}: reply_to must name a person with a WhatsApp phone JID, '
                                   'and only on WhatsApp act routes')
+        if 'stage_reactions' in route and (type(route['stage_reactions']) is not bool or (route['stage_reactions'] and (
+                route['source'] != 'whatsapp' or route['mode'] != 'act' or 'reply_to' in route))):
+            raise ValidationError(f'route {name}: stage_reactions must be true or false, and only on WhatsApp act routes '
+                                  'without reply_to (a reaction would show in the chat that reply_to keeps quiet)')
+        if route.get('stage_reactions'):
+            for key in ('ack_emoji', 'work_emoji', 'done_emoji'):
+                if settings[key] and not whatsapp_emoji(settings[key]):
+                    raise ValidationError(f'settings.{key}: {settings[key]!r} has no WhatsApp emoji (route {name} has stage_reactions); '
+                                          f'use an alias ({", ".join(WHATSAPP_EMOJI)}), a Teams ID such as 1f440_eyes, or the emoji itself')
         burst = route.get('photo_burst_seconds', 0)
         if (type(burst) is not int or burst < 0 or (burst and route['source'] != 'whatsapp')
                 or burst >= settings['wake_gap_minutes'] * 60):

@@ -11,7 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import cards, donegate, ledger, router, sources, t3
-from .config import GROUP, PHONE, Refused, ValidationError, hook_warning, prefixed, reply_phone, timestamp
+from .config import GROUP, PHONE, Refused, ValidationError, hook_warning, prefixed, reply_phone, timestamp, whatsapp_emoji
 from .effects import Effects, local_run
 from .storage import account_warning, event, insert, private_dir
 
@@ -37,6 +37,7 @@ ACK_LOOKBACK = 48 * 3600  # messages this recent have their stage reaction kept 
 ACK_TRIES = 3  # failed or uncertain calls per message and reaction before giving up
 ACK_PER_SYNC = 4  # toucan-bot reaction calls per sync (a message's swap may finish past it); bounds the delay to routing
 ACK_TIMEOUT = 15  # seconds per toucan-bot call
+WA_ACK_TIMEOUT = 20  # seconds per wacli reaction; each call connects to WhatsApp
 REPLIED = ('replied', 'owner replied', 'owner posted')  # close reasons that mean the person got an answer
 ANSWER_FOLLOWUP_SECONDS = 600  # an unquoted owner message this soon after a card's answer still adds to it
 # wacli's refusals to build a reply's quote. It checks the quote before it sends anything (a file
@@ -1440,34 +1441,48 @@ class App:
         return emojis if emojis[0] else []
 
     def sync_reactions(self, now, problems):
-        """Keep one reaction on each Teams request message in an act route that posts as the bot, showing
-        its stage: received (new or held), working (claimed, escalated or done) and done (closed with a reply;
-        an uncertain delivery counts, since the thread closed it after checking).
+        """Keep one reaction on each request message in a Teams act route that posts as the bot, or a WhatsApp
+        act route with stage_reactions, showing its stage: received (new or held), working (claimed, escalated
+        or done) and done (closed with a reply; an uncertain delivery counts, since the thread closed it after checking).
         Messages one person sends before Toucan has answered the earlier ones form a burst: only the newest
         carries the reaction, at the stage of the least advanced message in it, and earlier ones lose theirs.
-        A message an owner thread reacted to itself (`toucan react`) keeps only that reaction. A message
-        older than ACK_WINDOW that never had one gets none (a backlog after downtime). New reactions go on
-        before old ones come off. Failed or uncertain calls retry on later syncs, ACK_TRIES times each."""
+        On WhatsApp a photo that joined a request (photo_burst_seconds) is one of its messages, so an album's
+        newest photo carries it. A message an owner thread reacted to itself (`toucan react`) keeps only that
+        reaction. A message older than ACK_WINDOW that never had one gets none (a backlog after downtime). New
+        reactions go on before old ones come off; on WhatsApp, which keeps one reaction per sender on a message,
+        the new one replaces the old and an empty one removes it. Failed or uncertain calls retry on later
+        syncs, ACK_TRIES times each, and never hold up replies."""
         emojis = self.stage_emojis()
-        names = [r['name'] for r in self.cfg['routes']
-                 if r['source'] == 'teams' and r['mode'] == 'act' and r.get('post_as_bot')]
+        names = [r['name'] for r in self.cfg['routes'] if r['mode'] == 'act' and (
+            r.get('post_as_bot') if r['source'] == 'teams' else r['source'] == 'whatsapp' and r.get('stage_reactions'))]
         if not emojis or not names or self.dry or self.shadow:
             return []
-        rows = self.rows(
-            "SELECT r.id,r.thread,r.state,r.close_reason,r.closed_at,r.reply_chat,r.message_id,m.msg_id,m.chat,m.sender_key,m.ts,"
-            "EXISTS(SELECT 1 FROM outbox o WHERE o.request_id=r.id AND o.kind='send' AND o.state IN ('sent','uncertain')) AS sent "
-            "FROM requests r JOIN messages m ON m.id=r.message_id "
-            f"WHERE r.reply_source='teams' AND r.mode='act' AND r.route IN ({','.join('?' * len(names))}) "
-            "AND m.deleted=0 AND m.is_owner=0 AND m.ts>=? ORDER BY m.ts,r.id", (*names, now - ACK_LOOKBACK))
+        columns = ("SELECT r.id AS id,r.thread,r.state,r.close_reason,r.closed_at,r.reply_chat,m.id AS mkey,m.source,m.msg_id,m.chat,"
+                   "m.sender_key,m.sender_raw,m.ts AS ts,EXISTS(SELECT 1 FROM outbox o WHERE o.request_id=r.id AND o.kind='send' "
+                   "AND o.state IN ('sent','uncertain')) AS sent FROM requests r ")
+        where = (f" WHERE r.mode='act' AND r.route IN ({','.join('?' * len(names))}) AND (m.source='whatsapp' OR r.reply_source='teams') "
+                 "AND m.deleted=0 AND m.is_owner=0 AND m.ts>=?")
+        # A request's own message, and the photos that joined it.
+        rows = self.rows(columns + 'JOIN messages m ON m.id=r.message_id' + where + ' UNION ALL ' + columns +
+                         'JOIN request_messages l ON l.request_id=r.id JOIN messages m ON m.id=l.message_id' + where +
+                         ' ORDER BY ts,mkey,id', (*names, now - ACK_LOOKBACK) * 2)
+        mapping = {}
+        if any(row['source'] == 'whatsapp' for row in rows):
+            try:
+                mapping = sources.lid_map(self.paths)  # a 1:1 chat stored under its phone JID and its @lid is one chat
+            except (OSError, sqlite3.Error):
+                pass
         messages = {}
         for row in rows:
-            messages.setdefault(row['message_id'], []).append(row)
+            messages.setdefault(row['mkey'], []).append(row)
         state = {}
         for key, parts in messages.items():
+            chat = parts[0]['reply_chat'] if parts[0]['source'] == 'teams' else parts[0]['chat']
+            ids = [p['id'] for p in parts]
             events = [dict(json.loads(e['detail_json']), kind=e['kind']) for e in self.db.execute(
                 "SELECT kind,detail_json FROM events WHERE kind IN ('reaction_added','reaction_removed','reaction_failed',"
-                "'reaction_uncertain') AND request_id IN (SELECT id FROM requests WHERE message_id=?) ORDER BY id", (key,))]
-            events = [e for e in events if e.get('conversation_id') == parts[0]['reply_chat'] and e.get('message_id') == parts[0]['msg_id']]
+                f"'reaction_uncertain') AND request_id IN ({','.join('?' * len(ids))}) ORDER BY id", ids)]
+            events = [e for e in events if e.get('conversation_id') == chat and e.get('message_id') == parts[0]['msg_id']]
             auto = lambda e: bool(e.get('auto') or e.get('arrival'))
             on, tries, maybe = {}, {}, set()  # maybe: an uncertain call may have left Toucan's reaction on
             for e in events:
@@ -1483,7 +1498,7 @@ class App:
             stages = [3 if p['state'] == 'closed' and (p['close_reason'] in REPLIED or p['sent'])
                       else 0 if p['state'] == 'closed' else 1 if p['state'] in ('new', 'held') else 2 for p in parts]
             closed = [p['closed_at'] for p in parts if p['state'] == 'closed']
-            state[key] = dict(parts=parts, on=on, maybe=maybe, tries=tries, stages=stages,
+            state[key] = dict(parts=parts, chat=chat, on=on, maybe=maybe, tries=tries, stages=stages,
                               finished=max(closed) if len(closed) == len(parts) else None,
                               manual=any(e['kind'] in ('reaction_added', 'reaction_removed') and not auto(e) for e in events),
                               eligible=any(auto(e) for e in events) or parts[0]['ts'] >= now - ACK_WINDOW)
@@ -1495,51 +1510,80 @@ class App:
             if item['manual']:
                 continue
             part = item['parts'][0]
-            chain = bursts.get((part['chat'], part['sender_key']))
+            who = (mapping.get(part['chat'], part['chat']), part['sender_key'])
+            chain = bursts.get(who)
             if chain and any(state[k]['finished'] is None or state[k]['finished'] > part['ts'] for k in chain):
                 chain.append(key)
             else:
-                bursts[(part['chat'], part['sender_key'])] = chain = [key]
+                bursts[who] = chain = [key]
             stages = [s for k in chain for s in state[k]['stages'] if s]
             for k in chain:
                 want[k] = None
             if stages and item['eligible']:
                 open_ = [s for s in stages if s < 3]
                 want[key] = emojis[(min(open_) if open_ else 3) - 1]
+        # Each call is (emoji to send, remove, the reactions it records, the reactions it replaces when it succeeds).
         plan = []
         for key, item in state.items():
-            target, on = want[key], item['on']
-            ops = [(target, False)] if target and not on.get(target) else []
-            ops += [(emoji, True) for emoji in sorted({e for e, present in on.items() if present} | item['maybe']) if emoji != target]
-            ops = [op for op in ops if item['tries'].get(op, 0) < ACK_TRIES]
-            if target and not on.get(target) and item['tries'].get((target, False), 0) >= ACK_TRIES:
+            target, on, tries = want[key], item['on'], item['tries']
+            add = target and not on.get(target) and tries.get((target, False), 0) < ACK_TRIES
+            stale = [emoji for emoji in sorted({e for e, present in on.items() if present} | item['maybe']) if emoji != target]
+            if item['parts'][0]['source'] == 'teams':
+                ops = [(target, False, [target], [])] if add else []
+                ops += [(emoji, True, [emoji], []) for emoji in stale if tries.get((emoji, True), 0) < ACK_TRIES]
+            elif add:
+                ops = [(target, False, [target], stale)]
+            elif target:
+                # The target is on (or has failed ACK_TRIES times): anything else was replaced by it, or is still there.
+                ops = [(None, True, [], stale)] if stale and on.get(target) else []
+            else:
+                # An empty reaction removes Toucan's, whichever it is.
+                ops = [('', True, stale, [])] if any(tries.get((e, True), 0) < ACK_TRIES for e in stale) else []
+            if target and not on.get(target) and tries.get((target, False), 0) >= ACK_TRIES:
                 part = item['parts'][-1]
+                down = 'Teams bot' if part['source'] == 'teams' else 'WhatsApp (wacli)'
                 problems[f'ack:{key}'] = (f'{part["thread"]}: request {part["id"]} has no {target} reaction '
-                                          f'after {ACK_TRIES} tries; Teams bot may be down')
+                                          f'after {ACK_TRIES} tries; {down} may be down')
             if ops:
                 # First the newest messages that show nothing yet, then other changes, newest first.
                 plan.append((0 if not any(on.values()) and ops[0][1] is False else 1, -item['parts'][0]['ts'], key, ops))
         done, calls = [], 0
-        for _, _, key, ops in sorted(plan):
+        for _, _, key, ops in sorted(plan, key=lambda p: p[:3]):
             if calls >= ACK_PER_SYNC:
                 break
-            part = state[key]['parts'][-1]
-            for emoji, remove in ops:
+            part, chat = state[key]['parts'][-1], state[key]['chat']
+            for emoji, remove, shown, replaced in ops:
+                detail = dict(conversation_id=chat, message_id=part['msg_id'], auto=True)
+                if emoji is None:  # nothing to send: record what the reaction on the message already replaced
+                    with self.transaction():
+                        for old in replaced:
+                            self.record('reaction_removed', part['thread'], part['id'], **detail, emoji=old, removed=True, replaced=True)
+                    continue
                 calls += 1
-                detail = dict(conversation_id=part['reply_chat'], message_id=part['msg_id'], emoji=emoji, removed=remove, auto=True)
                 with self.transaction():
-                    self.record('reaction_pending', part['thread'], part['id'], **detail)
-                argv = ['toucan-bot', '--json', 'react', '--conversation', part['reply_chat'], '--message', part['msg_id'], '--emoji', emoji]
-                argv += ['--remove'] if remove else []
+                    for each in shown:
+                        self.record('reaction_pending', part['thread'], part['id'], **detail, emoji=each, removed=remove)
+                if part['source'] == 'teams':
+                    argv = ['toucan-bot', '--json', 'react', '--conversation', chat, '--message', part['msg_id'], '--emoji', emoji]
+                    argv += ['--remove'] if remove else []
+                else:
+                    argv = ['wacli', '--json', 'send', 'react', '--to', chat, '--id', part['msg_id'],
+                            '--reaction', whatsapp_emoji(emoji) if emoji else '']
+                    argv += ['--sender', part['sender_raw']] if chat.endswith('@g.us') and part['sender_raw'] else []
+                    argv += ['--store', str(self.paths.wa)]
                 try:
-                    result = local_run(self.fx, argv, timeout=ACK_TIMEOUT)
+                    result = local_run(self.fx, argv, timeout=ACK_TIMEOUT if part['source'] == 'teams' else WA_ACK_TIMEOUT)
                     kind = 'reaction_failed' if result.returncode else 'reaction_removed' if remove else 'reaction_added'
                     extra = {'error': (result.stderr or '')[:2000]} if result.returncode else {}
                 except Exception as error:
                     kind, extra = 'reaction_uncertain', {'error': type(error).__name__}
                 with self.transaction():
-                    self.record(kind, part['thread'], part['id'], **detail, **extra)
-                done.append(dict(request=part['id'], emoji=emoji, removed=remove, result=kind))
+                    for each in shown:
+                        self.record(kind, part['thread'], part['id'], **detail, emoji=each, removed=remove, **extra)
+                    if kind == 'reaction_added':
+                        for old in replaced:
+                            self.record('reaction_removed', part['thread'], part['id'], **detail, emoji=old, removed=True, replaced=True)
+                done += [dict(request=part['id'], emoji=each, removed=remove, result=kind) for each in shown]
         return done
 
     def reacted(self, message_id, detail):
