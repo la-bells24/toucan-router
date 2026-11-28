@@ -681,3 +681,18 @@ def test_discard_refuses_anything_but_a_failed_delivery(world, monkeypatch, caps
     assert main(['discard', '999', '--reason', 'x'], effects=world.fx, paths=world.paths) == 2
     assert main(['discard', str(out), '--reason', '  '], effects=world.fx, paths=world.paths) == 2
     assert world.app.rows('SELECT discarded_at FROM outbox') == [{'discarded_at': None}]
+
+
+def test_discarded_standalone_send_leaves_status(world, monkeypatch, capsys):
+    monkeypatch.setenv('TOUCAN_CONFIG', str(world.config_path))
+    monkeypatch.setenv('TOUCAN_DB', str(world.db_path))
+    world.seed()
+    world.send_result = subprocess.CompletedProcess([], 1, '', 'store is locked')
+    with pytest.raises(RuntimeError):
+        world.app.send('group', 'project-a', text='Update')
+    [row] = world.app.rows('SELECT id,request_id FROM outbox')
+    assert row['request_id'] is None
+    assert main(['discard', str(row['id']), '--reason', 'Out of date'], effects=world.fx, paths=world.paths) == 0
+    capsys.readouterr()
+    assert main(['status', '--json'], effects=world.fx, paths=world.paths) == 0
+    assert json.loads(capsys.readouterr().out)['outbox'] == []

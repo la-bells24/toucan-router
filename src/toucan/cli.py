@@ -492,7 +492,7 @@ def dispatch(args, app):
                     requests=app.rows("SELECT thread,state,count(*) AS count FROM requests WHERE state IN ('new','claimed','done','escalated') "
                                       'AND routing IS NULL GROUP BY thread,state'),
                     held=router.held_requests(app.db),
-                    outbox=app.rows("SELECT * FROM outbox WHERE (state!='sent' AND discarded_at IS NULL) OR (request_id IS NULL AND created_at>=?)",
+                    outbox=app.rows("SELECT * FROM outbox WHERE discarded_at IS NULL AND (state!='sent' OR (request_id IS NULL AND created_at>=?))",
                                     (app.fx.now() - 86400,)), alerts=app.rows('SELECT * FROM alerts'),
                     promises=app.rows("SELECT id,thread,promise,promise_due FROM requests "
                                       "WHERE state IN ('new','held','claimed','done') AND promise IS NOT NULL"),
